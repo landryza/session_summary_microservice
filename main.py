@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -155,40 +154,59 @@ def current_user_id(
 # Core logic
 # ----------------------------
 
-def compute_summary(user_id: str, session_id: str) -> Summary:
-    session = ACTIVE.get(user_id, {}).get(session_id)
-    if not session:
-        # Try finished summaries
-        for s in FINISHED.get(user_id, []):
-            if s.get('session_id') == session_id:
-                return Summary(**s)  # type: ignore[arg-type]
-        raise HTTPException(status_code=404, detail="Session not found")
+def find_finished_summary(user_id: str, session_id: str):
+    for s in FINISHED.get(user_id, []):
+        if s.get("session_id") == session_id:
+            return s
+    return None
 
-    events = session.get('events', [])
-    # Count one round per bet
-    rounds = sum(1 for e in events if e.get('event_type') == 'bet')
-    total_bets = sum(float(e.get('amount', 0)) for e in events if e.get('event_type') == 'bet')
-    total_wins = sum(float(e.get('amount', 0)) for e in events if e.get('event_type') == 'win')
-    net_change = total_wins - total_bets
+def calculate_totals(events):
+    rounds = sum(1 for e in events if e.get("event_type") == "bet")
+    total_bets = sum(float(e.get("amount", 0)) for e in events if e.get("event_type") == "bet")
+    total_wins = sum(float(e.get("amount", 0)) for e in events if e.get("event_type") == "win")
 
-    # Timestamps
-    ts_list: List[datetime] = []
+    return rounds, total_bets, total_wins
+
+def extract_timestamps(events, session):
+    ts_list = []
+
     for e in events:
-        ts = e.get('timestamp')
+        ts = e.get("timestamp")
         if isinstance(ts, str):
             try:
                 ts_list.append(parse_iso(ts))
             except Exception:
                 pass
-    start_time = session.get('start_time')
-    end_time = session.get('end_time')
+
+    start_time = session.get("start_time")
+    end_time = session.get("end_time")
+
     if ts_list:
         ts_list.sort()
         start_time = ts_list[0].replace(microsecond=0, tzinfo=timezone.utc).isoformat()
+
         if end_time is None:
             end_time = ts_list[-1].replace(microsecond=0, tzinfo=timezone.utc).isoformat()
 
-    result = Summary(
+    return start_time, end_time
+
+def compute_summary(user_id: str, session_id: str) -> Summary:
+    session = ACTIVE.get(user_id, {}).get(session_id)
+
+    if not session:
+        finished = find_finished_summary(user_id, session_id)
+        if finished:
+            return Summary(**finished)
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    events = session.get("events", [])
+
+    rounds, total_bets, total_wins = calculate_totals(events)
+    net_change = total_wins - total_bets
+
+    start_time, end_time = extract_timestamps(events, session)
+
+    return Summary(
         session_id=session_id,
         user_id=user_id,
         start_time=start_time or now_iso(),
@@ -198,7 +216,6 @@ def compute_summary(user_id: str, session_id: str) -> Summary:
         total_wins=_int_if_whole(total_wins),
         net_change=_int_if_whole(net_change),
     )
-    return result
 
 # ----------------------------
 # Endpoints
