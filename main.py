@@ -190,6 +190,7 @@ def extract_timestamps(events, session):
 
     return start_time, end_time
 
+# High-level summary computation that delegates work to helper functions
 def compute_summary(user_id: str, session_id: str) -> Summary:
     session = ACTIVE.get(user_id, {}).get(session_id)
 
